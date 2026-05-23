@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: yeah-dental-order-lookup
+    env: node
+    buildCommand: npm install
+    startCommand: node index.js
+    envVars:
+      - key: ZOHO_CLIENT_ID
+        sync: false
+      - key: ZOHO_CLIENT_SECRET
+        sync: false
+      - key: ZOHO_REFRESH_TOKEN
+        sync: false
