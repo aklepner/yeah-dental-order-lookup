@@ -5,16 +5,13 @@ const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Zoho credentials - set these as environment variables in Render
 const CLIENT_ID = process.env.ZOHO_CLIENT_ID;
 const CLIENT_SECRET = process.env.ZOHO_CLIENT_SECRET;
 const REFRESH_TOKEN = process.env.ZOHO_REFRESH_TOKEN;
 
-// Cache the access token in memory
 let cachedToken = null;
 let tokenExpiry = null;
 
-// Get a fresh access token using the refresh token
 async function getAccessToken() {
   if (cachedToken && tokenExpiry && Date.now() < tokenExpiry - 300000) {
     return cachedToken;
@@ -40,7 +37,6 @@ async function getAccessToken() {
   }
 }
 
-// Look up order from Zoho Commerce
 async function lookupOrder(orderNumber) {
   const token = await getAccessToken();
 
@@ -68,14 +64,12 @@ async function lookupOrder(orderNumber) {
     }
   }
 
-  throw new Error('Order not found across all endpoints');
+  throw new Error('Order not found');
 }
 
-// Main order lookup endpoint - called by GHL Voice AI
 app.post('/order-lookup', async (req, res) => {
-  // GHL may send data as JSON body, form-encoded, or query params
-  const order_number = req.body.order_number 
-    || req.body.parameters?.order_number 
+  const order_number = req.body.order_number
+    || req.body.parameters?.order_number
     || req.query.order_number
     || (req.body.parameters && JSON.parse(req.body.parameters)?.order_number);
 
@@ -84,8 +78,8 @@ app.post('/order-lookup', async (req, res) => {
 
   if (!order_number) {
     return res.status(200).json({
-      success: false,
-      message: 'I need an order number to look that up for you. Could you please provide your order number?'
+      result: 'error',
+      say: 'I need an order number to look that up. Could you please provide your order number?'
     });
   }
 
@@ -99,56 +93,43 @@ app.post('/order-lookup', async (req, res) => {
 
     if (!order) {
       return res.json({
-        success: false,
-        message: `I was unable to find an order with number ${cleanOrderNumber}. Please double check the order number and try again.`
+        result: 'not_found',
+        say: `I was not able to find order number ${cleanOrderNumber} in our system. Please double check the number and try again, or I can connect you with the team.`
       });
     }
 
     const orderNumber = order.salesorder_number || order.so_number || cleanOrderNumber;
-    const status = order.status || order.order_status || 'Unknown';
-    const customerName = order.customer_name || order.contact_name || 'Customer';
+    const status = order.status || order.order_status || 'unknown';
+    const customerName = order.customer_name || order.contact_name || '';
     const total = order.total || order.grand_total || '0';
     const date = order.date || order.created_time || '';
     const shipDate = order.shipment_date || order.shipped_date || '';
-    const items = order.line_items || order.items || [];
-    const itemCount = items.length;
 
-    let message = `I found your order ${orderNumber}. The current status is ${status}.`;
+    // Build the say field as a complete spoken sentence
+    let say = `Order number ${orderNumber} `;
 
     if (customerName) {
-      message += ` This order is for ${customerName}.`;
+      say += `for ${customerName} `;
     }
 
-    if (total) {
-      message += ` The order total is $${parseFloat(total).toFixed(2)}.`;
-    }
-
-    if (itemCount > 0) {
-      message += ` It contains ${itemCount} item${itemCount > 1 ? 's' : ''}.`;
-    }
+    say += `has a current status of ${status}. `;
+    say += `The order total is $${parseFloat(total).toFixed(2)}. `;
 
     if (shipDate) {
-      message += ` Estimated ship date is ${shipDate}.`;
+      say += `The estimated ship date is ${shipDate}. `;
     }
 
-    if (status.toLowerCase() === 'confirmed') {
-      message += ' Your order has been confirmed and is being processed.';
-    } else if (status.toLowerCase() === 'shipped') {
-      message += ' Your order has been shipped.';
-    } else if (status.toLowerCase() === 'delivered') {
-      message += ' Your order has been delivered.';
-    } else if (status.toLowerCase() === 'draft') {
-      message += ' This order is still in draft status.';
+    if (date) {
+      say += `This order was placed on ${date}.`;
     }
 
     return res.json({
-      success: true,
-      message,
+      result: 'found',
+      say,
       order_number: orderNumber,
       status,
       customer_name: customerName,
-      total,
-      item_count: itemCount,
+      total: parseFloat(total).toFixed(2),
       ship_date: shipDate,
       date
     });
@@ -156,13 +137,12 @@ app.post('/order-lookup', async (req, res) => {
   } catch (error) {
     console.error('Order lookup error:', error.message);
     return res.json({
-      success: false,
-      message: `I was unable to retrieve the order information right now. Please try again or contact our support team for assistance with order ${cleanOrderNumber}.`
+      result: 'error',
+      say: `I was not able to retrieve order ${cleanOrderNumber} right now. Let me connect you with the team who can look into this for you.`
     });
   }
 });
 
-// Health check endpoint
 app.get('/', (req, res) => {
   res.json({ status: 'Yeah Dental Order Lookup API is running' });
 });
