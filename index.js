@@ -16,7 +16,6 @@ async function getAccessToken() {
   if (cachedToken && tokenExpiry && Date.now() < tokenExpiry - 300000) {
     return cachedToken;
   }
-
   try {
     const response = await axios.post('https://accounts.zoho.com/oauth/v2/token', null, {
       params: {
@@ -26,11 +25,9 @@ async function getAccessToken() {
         grant_type: 'refresh_token'
       }
     });
-
     cachedToken = response.data.access_token;
     tokenExpiry = Date.now() + (response.data.expires_in * 1000);
     return cachedToken;
-
   } catch (error) {
     console.error('Token refresh error:', error.response?.data || error.message);
     throw new Error('Failed to refresh access token');
@@ -39,13 +36,11 @@ async function getAccessToken() {
 
 async function lookupOrder(orderNumber) {
   const token = await getAccessToken();
-
   const endpoints = [
     `https://commerce.zoho.com/api/v1/salesorders?salesorder_number=${orderNumber}`,
     `https://www.zohoapis.com/commerce/v1/salesorders?salesorder_number=${orderNumber}`,
     `https://commerce.zoho.com/store/api/v1/salesorders?salesorder_number=${orderNumber}`
   ];
-
   for (const url of endpoints) {
     try {
       const response = await axios.get(url, {
@@ -54,7 +49,6 @@ async function lookupOrder(orderNumber) {
           'Content-Type': 'application/json'
         }
       });
-
       if (response.data && (response.data.salesorders || response.data.data)) {
         return response.data;
       }
@@ -63,7 +57,6 @@ async function lookupOrder(orderNumber) {
       continue;
     }
   }
-
   throw new Error('Order not found');
 }
 
@@ -78,7 +71,9 @@ app.post('/order-lookup', async (req, res) => {
 
   if (!order_number) {
     return res.status(200).json({
+      success: false,
       result: 'error',
+      message: 'I need an order number to look that up. Could you please provide your order number?',
       say: 'I need an order number to look that up. Could you please provide your order number?'
     });
   }
@@ -87,13 +82,14 @@ app.post('/order-lookup', async (req, res) => {
 
   try {
     const data = await lookupOrder(cleanOrderNumber);
-
     const orders = data.salesorders || data.data || [];
     const order = Array.isArray(orders) ? orders[0] : orders;
 
     if (!order) {
       return res.json({
+        success: false,
         result: 'not_found',
+        message: `I was not able to find order number ${cleanOrderNumber} in our system. Please double check the number and try again, or I can connect you with the team.`,
         say: `I was not able to find order number ${cleanOrderNumber} in our system. Please double check the number and try again, or I can connect you with the team.`
       });
     }
@@ -104,41 +100,46 @@ app.post('/order-lookup', async (req, res) => {
     const total = order.total || order.grand_total || '0';
     const date = order.date || order.created_time || '';
     const shipDate = order.shipment_date || order.shipped_date || '';
+    const items = order.line_items || order.items || [];
+    const itemCount = items.length;
 
-    // Build the say field as a complete spoken sentence
-    let say = `Order number ${orderNumber} `;
+    // Build full spoken message
+    let message = `I found your order ${orderNumber}. The current status is ${status}.`;
+    if (customerName) message += ` This order is for ${customerName}.`;
+    if (total) message += ` The order total is $${parseFloat(total).toFixed(2)}.`;
+    if (itemCount > 0) message += ` It contains ${itemCount} item${itemCount > 1 ? 's' : ''}.`;
+    if (shipDate) message += ` The estimated ship date is ${shipDate}.`;
+    if (date) message += ` This order was placed on ${date}.`;
 
-    if (customerName) {
-      say += `for ${customerName} `;
-    }
+    if (status.toLowerCase() === 'confirmed') message += ' Your order has been confirmed and is being processed.';
+    else if (status.toLowerCase() === 'shipped') message += ' Your order has been shipped.';
+    else if (status.toLowerCase() === 'delivered') message += ' Your order has been delivered.';
+    else if (status.toLowerCase() === 'draft') message += ' This order is still in draft status.';
 
-    say += `has a current status of ${status}. `;
-    say += `The order total is $${parseFloat(total).toFixed(2)}. `;
-
-    if (shipDate) {
-      say += `The estimated ship date is ${shipDate}. `;
-    }
-
-    if (date) {
-      say += `This order was placed on ${date}.`;
-    }
+    console.log('Returning message:', message);
 
     return res.json({
+      success: true,
       result: 'found',
-      say,
+      message,
+      say: message,
       order_number: orderNumber,
       status,
       customer_name: customerName,
       total: parseFloat(total).toFixed(2),
+      item_count: itemCount,
       ship_date: shipDate,
       date
     });
 
   } catch (error) {
     console.error('Order lookup error:', error.message);
+    const errorMsg = `I was not able to retrieve order ${cleanOrderNumber} right now. Let me connect you with the team who can look into this for you.`;
     return res.json({
+      success: false,
       result: 'error',
-      say: `I was not able to retrieve order ${cleanOrderNumber} right now. Let me connect you with the team who can look into this for you.`
+      message: errorMsg,
+      say: errorMsg
     });
   }
 });
