@@ -3,6 +3,7 @@ const axios = require('axios');
 
 const app = express();
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
 // Zoho credentials - set these as environment variables in Render
 const CLIENT_ID = process.env.ZOHO_CLIENT_ID;
@@ -15,7 +16,6 @@ let tokenExpiry = null;
 
 // Get a fresh access token using the refresh token
 async function getAccessToken() {
-  // Return cached token if still valid (with 5 min buffer)
   if (cachedToken && tokenExpiry && Date.now() < tokenExpiry - 300000) {
     return cachedToken;
   }
@@ -44,7 +44,6 @@ async function getAccessToken() {
 async function lookupOrder(orderNumber) {
   const token = await getAccessToken();
 
-  // Try multiple API endpoint formats for Zoho Commerce
   const endpoints = [
     `https://commerce.zoho.com/api/v1/salesorders?salesorder_number=${orderNumber}`,
     `https://www.zohoapis.com/commerce/v1/salesorders?salesorder_number=${orderNumber}`,
@@ -74,12 +73,19 @@ async function lookupOrder(orderNumber) {
 
 // Main order lookup endpoint - called by GHL Voice AI
 app.post('/order-lookup', async (req, res) => {
-  const { order_number } = req.body;
+  // GHL may send data as JSON body, form-encoded, or query params
+  const order_number = req.body.order_number 
+    || req.body.parameters?.order_number 
+    || req.query.order_number
+    || (req.body.parameters && JSON.parse(req.body.parameters)?.order_number);
+
+  console.log('Incoming request body:', JSON.stringify(req.body));
+  console.log('Extracted order_number:', order_number);
 
   if (!order_number) {
-    return res.status(400).json({
+    return res.status(200).json({
       success: false,
-      message: 'I need an order number to look that up for you.'
+      message: 'I need an order number to look that up for you. Could you please provide your order number?'
     });
   }
 
@@ -88,7 +94,6 @@ app.post('/order-lookup', async (req, res) => {
   try {
     const data = await lookupOrder(cleanOrderNumber);
 
-    // Handle different response structures
     const orders = data.salesorders || data.data || [];
     const order = Array.isArray(orders) ? orders[0] : orders;
 
@@ -99,7 +104,6 @@ app.post('/order-lookup', async (req, res) => {
       });
     }
 
-    // Extract the key fields
     const orderNumber = order.salesorder_number || order.so_number || cleanOrderNumber;
     const status = order.status || order.order_status || 'Unknown';
     const customerName = order.customer_name || order.contact_name || 'Customer';
@@ -109,7 +113,6 @@ app.post('/order-lookup', async (req, res) => {
     const items = order.line_items || order.items || [];
     const itemCount = items.length;
 
-    // Build a natural language response for the Voice AI to read
     let message = `I found your order ${orderNumber}. The current status is ${status}.`;
 
     if (customerName) {
